@@ -1,8 +1,12 @@
 const express = require("express");
 const cors = require("cors");
+const XLSX = require("xlsx");
+const fs = require("fs");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+let solicitudes = [];
 
 app.use(cors());
 app.use(express.json());
@@ -14,11 +18,40 @@ function calcularEdad(fechaNacimiento) {
   let edad = hoy.getFullYear() - fecha.getFullYear();
   const diferenciaMes = hoy.getMonth() - fecha.getMonth();
 
-  if (diferenciaMes < 0 || (diferenciaMes === 0 && hoy.getDate() < fecha.getDate())) {
+  if (
+    diferenciaMes < 0 ||
+    (diferenciaMes === 0 && hoy.getDate() < fecha.getDate())
+  ) {
     edad--;
   }
 
   return edad;
+}
+
+function guardarEnExcel(data) {
+  const archivo = "solicitudes.xlsx";
+
+  let workbook;
+  let worksheet;
+  let datos = [];
+
+  if (fs.existsSync(archivo)) {
+    workbook = XLSX.readFile(archivo);
+    worksheet = workbook.Sheets["Solicitudes"];
+
+    if (worksheet) {
+      datos = XLSX.utils.sheet_to_json(worksheet);
+    }
+  }
+
+  datos.push(data);
+
+  worksheet = XLSX.utils.json_to_sheet(datos);
+
+  workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Solicitudes");
+
+  XLSX.writeFile(workbook, archivo);
 }
 
 app.get("/", function (req, res) {
@@ -105,7 +138,9 @@ app.post("/api/beneficio/evaluar", function (req, res) {
   for (let i = 0; i < reglas.length; i++) {
     if (reglas[i].cumple) {
       score = score + reglas[i].puntos;
-      detalleReglas.push("Aplica: " + reglas[i].nombre + " (+" + reglas[i].puntos + ")");
+      detalleReglas.push(
+        "Aplica: " + reglas[i].nombre + " (+" + reglas[i].puntos + ")"
+      );
     } else {
       detalleReglas.push("No aplica: " + reglas[i].nombre);
     }
@@ -123,16 +158,48 @@ app.post("/api/beneficio/evaluar", function (req, res) {
 
   const motivoDecision = detalleReglas.join(". ");
 
+  const resultado = {
+    folio: "SB-2026-" + solicitudId,
+    fechaRegistro: new Date().toISOString(),
+    solicitudId: solicitudId,
+    tipoBeneficio: tipoBeneficio,
+    ingresosMensuales: ingresosMensuales,
+    estrato: estrato,
+    nucleoFamiliar: nucleoFamiliar,
+    fechaNacimiento: fechaNacimiento,
+    score: score,
+    estado: estado,
+    motivoDecision: motivoDecision
+  };
+
   const tiempoEspera = Math.floor(Math.random() * (6000 - 3000 + 1)) + 3000;
 
   setTimeout(function () {
-    return res.status(200).json({
-      solicitudId: solicitudId,
-      score: score,
-      estado: estado,
-      motivoDecision: motivoDecision
-    });
+    solicitudes.push(resultado);
+    guardarEnExcel(resultado);
+
+    return res.status(200).json(resultado);
   }, tiempoEspera);
+});
+
+app.get("/api/beneficio/solicitudes", function (req, res) {
+  res.json(solicitudes);
+});
+
+app.get("/api/beneficio/solicitudes/:id", function (req, res) {
+  const id = req.params.id;
+
+  const solicitud = solicitudes.find(function (s) {
+    return s.solicitudId === id;
+  });
+
+  if (!solicitud) {
+    return res.status(404).json({
+      mensaje: "Solicitud no encontrada"
+    });
+  }
+
+  res.json(solicitud);
 });
 
 app.listen(PORT, function () {
